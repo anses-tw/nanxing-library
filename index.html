@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>南興國小圖書館藏書篩檢系統 (雲端同步版)</title>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 React 與 ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 引入 Babel 讓瀏覽器可以編譯 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 引入 PapaParse 處理 CSV 解析 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        th { position: sticky; top: 0; background-color: #f8fafc; z-index: 10; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); }
+        .spinner { border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top: 3px solid white; width: 16px; height: 16px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+
+        const CATEGORIES = [
+            { id: '', name: '全部類別' }, { id: '0', name: '000 總類' }, { id: '1', name: '100 哲學類' },
+            { id: '2', name: '200 宗教類' }, { id: '3', name: '300 科學類' }, { id: '4', name: '400 應用科學類' },
+            { id: '5', name: '500 社會科學類' }, { id: '6', name: '600-700 史地類' }, { id: '7', name: '600-700 史地類' },
+            { id: '8', name: '800 語文(文學)類' }, { id: '9', name: '900 藝術類' }
+        ];
+
+        const Icons = {
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            Download: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+            Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+            Book: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+            SortAsc: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M11 4h4"/><path d="M11 8h7"/><path d="M11 12h10"/></svg>,
+            SortDesc: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/><path d="M11 4h10"/><path d="M11 8h7"/><path d="M11 12h4"/></svg>,
+            Database: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>,
+            CloudSync: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/><path d="M12 12v6"/><path d="m8 14 4-4 4 4"/></svg>,
+            CloudOff: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 2 20 20"/><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 0 1 2.5 8.24"/></svg>
+        };
+
+        // ====== 🟢 1. 館藏資料來源設定 (Google 試算表 CSV) ======
+        // 若您已將試算表發布，可將網址貼於雙引號內，例如: const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/.../pub?output=csv";
+        const GOOGLE_SHEET_CSV_URL = "";
+
+        // ====== ☁️ 2. 雲端資料庫設定 (Firebase) ======
+        // 已為您套入剛剛取得的金鑰
+        const CUSTOM_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDVMziWGy7Vg1lbdWuEH15EhU2UP0-sXsU",
+            authDomain: "nanxing-library.firebaseapp.com",
+            projectId: "nanxing-library",
+            storageBucket: "nanxing-library.firebasestorage.app",
+            messagingSenderId: "998156885692",
+            appId: "1:998156885692:web:d987fa280b1abc3fbcfab9"
+        };
+        // ===================================================
+
+        const App = () => {
+            // --- 狀態管理 ---
+            const [allBooks, setAllBooks] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [sheetUrlInput, setSheetUrlInput] = useState("");
+            
+            // 雲端同步狀態
+            const [user, setUser] = useState(null);
+            const [dbSetup, setDbSetup] = useState(null);
+            const [isCloudConnected, setIsCloudConnected] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(false);
+
+            const [filters, setFilters] = useState({ keyword: "", minBorrow: "", maxBorrow: "", minYear: "", maxYear: "", categoryPrefix: "" });
+            const [sortConfig, setSortConfig] = useState({ key: "borrowCount", direction: "asc" });
+            const [currentPage, setCurrentPage] = useState(1);
+            const itemsPerPage = 50;
+            const [bookStatus, setBookStatus] = useState({});
+            const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, type: null });
+
+            // --- ☁️ 初始化 Firebase 雲端資料庫 ---
+            useEffect(() => {
+                let isMounted = true;
+                const setupFirebase = async () => {
+                    try {
+                        const nativeImport = new Function('url', 'return import(url)');
+                        const appMod = await nativeImport("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                        const authMod = await nativeImport("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                        const fsMod = await nativeImport("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+
+                        let config = null;
+                        if (CUSTOM_FIREBASE_CONFIG) {
+                            config = CUSTOM_FIREBASE_CONFIG;
+                        } else if (typeof __firebase_config !== 'undefined') {
+                            config = JSON.parse(__firebase_config);
+                        }
+
+                        if (!config) {
+                            console.warn("未設定 Firebase Config，退回單機模式。");
+                            return;
+                        }
+
+                        const app = appMod.initializeApp(config);
+                        const auth = authMod.getAuth(app);
+                        const firestore = fsMod.getFirestore(app);
+
+                        if (isMounted) {
+                            setDbSetup({ firestore, collection: fsMod.collection, doc: fsMod.doc, setDoc: fsMod.setDoc, deleteDoc: fsMod.deleteDoc, onSnapshot: fsMod.onSnapshot });
+                        }
+
+                        let token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        
+                        // 若使用自訂 Firebase 金鑰，不可使用開發環境的 Token，直接採用匿名登入
+                        if (token && !CUSTOM_FIREBASE_CONFIG) {
+                            await authMod.signInWithCustomToken(auth, token);
+                        } else {
+                            await authMod.signInAnonymously(auth);
+                        }
+
+                        authMod.onAuthStateChanged(auth, (u) => {
+                            if (isMounted && u) setUser(u);
+                        });
+
+                    } catch (error) {
+                        console.error("Firebase 初始化失敗:", error);
+                    }
+                };
+                setupFirebase();
+                return () => { isMounted = false; };
+            }, []);
+
+            // --- ☁️ 監聽雲端標記資料 ---
+            useEffect(() => {
+                if (!user || !dbSetup) return;
+
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'nanxing-library-app';
+                // 為了方便 GitHub 代管的測試，我們將路徑稍微簡化
+                const marksRef = dbSetup.collection(dbSetup.firestore, 'library_marks');
+
+                const unsubscribe = dbSetup.onSnapshot(marksRef, (snapshot) => {
+                    const marksData = {};
+                    snapshot.forEach((doc) => {
+                        marksData[doc.id] = doc.data().status;
+                    });
+                    setBookStatus(marksData);
+                    setIsCloudConnected(true);
+                }, (error) => {
+                    console.error("同步標記失敗:", error);
+                    setIsCloudConnected(false);
+                });
+
+                return () => unsubscribe();
+            }, [user, dbSetup]);
+
+            // --- 載入 Google 試算表 CSV ---
+            const fetchCSVData = (url) => {
+                if (!url) return;
+                setIsLoading(true);
+                Papa.parse(url, {
+                    download: true,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        const data = results.data;
+                        let headerRowIndex = -1;
+                        for (let i = 0; i < Math.min(10, data.length); i++) {
+                            if (data[i].some(cell => typeof cell === 'string' && cell.includes('登錄號'))) {
+                                headerRowIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (headerRowIndex === -1) {
+                            alert("解析失敗：找不到包含「登錄號」的標題列。");
+                            setIsLoading(false);
+                            return;
+                        }
+
+                        const headers = data[headerRowIndex].map(h => h ? h.trim() : '');
+                        const rawBooks = [];
+                        for (let i = headerRowIndex + 1; i < data.length; i++) {
+                            const row = data[i];
+                            if (row.length < headers.length * 0.5 || !row[0]) continue;
+                            let bookObj = {};
+                            headers.forEach((headerName, index) => {
+                                if (headerName) bookObj[headerName] = row[index] ? row[index].trim() : '';
+                            });
+                            rawBooks.push(bookObj);
+                        }
+
+                        const processedBooks = rawBooks.map((b, index) => {
+                            let year = parseInt(b['出版年']);
+                            if (isNaN(year)) year = null;
+                            let borrow = parseInt(b['借閱次數']);
+                            if (isNaN(borrow)) borrow = 0;
+
+                            const safeId = (b['登錄號'] || `unknown_${index}`).toString().replace(/[\/\.]/g, '_');
+
+                            return {
+                                _internalId: index,
+                                id: safeId,
+                                title: b['書名'] || '無書名',
+                                author: b['著者名'] || '',
+                                category: b['分類號'] || '',
+                                publishYear: year,
+                                borrowCount: borrow
+                            };
+                        });
+
+                        setAllBooks(processedBooks);
+                        setCurrentPage(1);
+                        setIsLoading(false);
+                    },
+                    error: function(err) {
+                        alert("讀取資料失敗！請確認網址是否正確。");
+                        setIsLoading(false);
+                    }
+                });
+            };
+
+            useEffect(() => {
+                if (GOOGLE_SHEET_CSV_URL) fetchCSVData(GOOGLE_SHEET_CSV_URL);
+            }, []);
+
+            // --- 篩選與排序邏輯 ---
+            const filteredAndSortedBooks = useMemo(() => {
+                let result = allBooks;
+                if (filters.keyword) {
+                    const kw = filters.keyword.toLowerCase();
+                    result = result.filter(b => b.title.toLowerCase().includes(kw) || b.id.toLowerCase().includes(kw) || b.author.toLowerCase().includes(kw));
+                }
+                if (filters.minBorrow !== '') result = result.filter(b => b.borrowCount >= parseInt(filters.minBorrow));
+                if (filters.maxBorrow !== '') result = result.filter(b => b.borrowCount <= parseInt(filters.maxBorrow));
+                if (filters.minYear !== '') result = result.filter(b => b.publishYear !== null && b.publishYear >= parseInt(filters.minYear));
+                if (filters.maxYear !== '') result = result.filter(b => b.publishYear !== null && b.publishYear <= parseInt(filters.maxYear));
+                if (filters.categoryPrefix) {
+                    if (filters.categoryPrefix === '6' || filters.categoryPrefix === '7') {
+                        result = result.filter(b => b.category.startsWith('6') || b.category.startsWith('7'));
+                    } else {
+                        result = result.filter(b => b.category.startsWith(filters.categoryPrefix));
+                    }
+                }
+                if (sortConfig.key) {
+                    result.sort((a, b) => {
+                        let valA = a[sortConfig.key];
+                        let valB = b[sortConfig.key];
+                        if (valA === null) valA = sortConfig.direction === 'asc' ? Infinity : -Infinity;
+                        if (valB === null) valB = sortConfig.direction === 'asc' ? Infinity : -Infinity;
+                        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                        return 0;
+                    });
+                }
+                return result;
+            }, [allBooks, filters, sortConfig]);
+
+            const totalPages = Math.ceil(filteredAndSortedBooks.length / itemsPerPage);
+            const paginatedBooks = filteredAndSortedBooks.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+            const handleFilterChange = (e) => {
+                const { name, value } = e.target;
+                setFilters(prev => ({ ...prev, [name]: value }));
+                setCurrentPage(1); 
+            };
+
+            const handleSort = (key) => {
+                let direction = 'asc';
+                if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+                setSortConfig({ key, direction });
+            };
+
+            // --- ☁️ 更新單一書籍標記 ---
+            const toggleStatus = async (id, statusType) => {
+                const currentStatus = bookStatus[id];
+                const newStatus = currentStatus === statusType ? null : statusType;
+
+                if (!user || !dbSetup) {
+                    setBookStatus(prev => ({ ...prev, [id]: newStatus }));
+                    return;
+                }
+
+                const docRef = dbSetup.doc(dbSetup.firestore, 'library_marks', id);
+
+                try {
+                    if (newStatus === null) {
+                        await dbSetup.deleteDoc(docRef);
+                    } else {
+                        await dbSetup.setDoc(docRef, { status: newStatus, updatedBy: user.uid, updatedAt: Date.now() });
+                    }
+                } catch (e) {
+                    console.error("儲存至雲端失敗:", e);
+                    alert("儲存標記至雲端失敗，請確認 Firebase 資料庫權限（測試模式）是否設定正確。");
+                }
+            };
+
+            // --- ☁️ 執行批次標記 ---
+            const executeBulkMark = async () => {
+                const statusType = confirmDialog.type;
+                setConfirmDialog({ isOpen: false, type: null });
+
+                if (!user || !dbSetup) {
+                    setBookStatus(prev => {
+                        const newStatusMap = { ...prev };
+                        filteredAndSortedBooks.forEach(book => {
+                            if (statusType === 'clear') delete newStatusMap[book.id];
+                            else newStatusMap[book.id] = statusType;
+                        });
+                        return newStatusMap;
+                    });
+                    return;
+                }
+
+                setIsSyncing(true);
+                const chunkSize = 200; 
+                
+                try {
+                    for (let i = 0; i < filteredAndSortedBooks.length; i += chunkSize) {
+                        const chunk = filteredAndSortedBooks.slice(i, i + chunkSize);
+                        const promises = chunk.map(book => {
+                            const docRef = dbSetup.doc(dbSetup.firestore, 'library_marks', book.id);
+                            if (statusType === 'clear') {
+                                return dbSetup.deleteDoc(docRef).catch(()=>true); 
+                            } else {
+                                return dbSetup.setDoc(docRef, { status: statusType, updatedBy: user.uid, updatedAt: Date.now() });
+                            }
+                        });
+                        await Promise.all(promises);
+                    }
+                } catch (e) {
+                    console.error("批次儲存至雲端失敗:", e);
+                } finally {
+                    setIsSyncing(false);
+                }
+            };
+
+            // --- 匯出功能 ---
+            const generateCSVAndDownload = (dataToExport, filename) => {
+                const headers = ['標記狀態', '登錄號', '書名', '著者名', '分類號', '出版年', '借閱次數'];
+                const rows = dataToExport.map(b => {
+                    let statusStr = "未標記";
+                    if (bookStatus[b.id] === 'discard') statusStr = "汰換";
+                    if (bookStatus[b.id] === 'discuss') statusStr = "待討論";
+                    if (bookStatus[b.id] === 'keep') statusStr = "保留";
+                    return [statusStr, b.id, b.title, b.author, b.category, b.publishYear || '', b.borrowCount];
+                });
+
+                let csvContent = "\uFEFF"; 
+                [headers, ...rows].forEach(rowArray => {
+                    let row = rowArray.map(item => {
+                        let str = String(item);
+                        if (str.includes(',') || str.includes('"')) str = `"${str.replace(/"/g, '""')}"`;
+                        return str;
+                    }).join(",");
+                    csvContent += row + "\r\n";
+                });
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                link.setAttribute("href", URL.createObjectURL(blob));
+                link.setAttribute("download", filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const exportAllToCSV = () => {
+                if (allBooks.length === 0) return alert("沒有資料可以匯出");
+                generateCSVAndDownload(allBooks, `南興國小_全館藏標記總表_${new Date().toISOString().split('T')[0]}.csv`);
+            };
+
+            const exportFilteredToCSV = () => {
+                if (filteredAndSortedBooks.length === 0) return alert("目前篩選結果為空，無法匯出");
+                generateCSVAndDownload(filteredAndSortedBooks, `南興國小_篩選結果清單_${new Date().toISOString().split('T')[0]}.csv`);
+            };
+
+            // --- UI 渲染區塊 ---
+            return (
+                <div className="min-h-screen flex flex-col">
+                    {/* Header */}
+                    <header className="bg-teal-700 text-white shadow-md">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <div className="flex items-center space-x-3">
+                                <Icons.Book />
+                                <h1 className="text-xl font-bold">南興國小 圖書館藏書篩檢系統</h1>
+                            </div>
+                            
+                            {/* 雲端連線狀態指示器 */}
+                            <div className={`text-sm px-3 py-1.5 rounded-md border flex items-center space-x-2 transition-colors ${isCloudConnected ? 'bg-teal-800 border-teal-500 text-teal-50' : 'bg-gray-700 border-gray-500 text-gray-200'}`}>
+                                {isCloudConnected ? (
+                                    <>
+                                        <span className="relative flex h-3 w-3 mr-1">
+                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                                          <span className="relative inline-flex rounded-full h-3 w-3 bg-teal-500"></span>
+                                        </span>
+                                        <Icons.CloudSync />
+                                        <span>已連線至雲端 (多人在線同步中)</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Icons.CloudOff />
+                                        <span>單機模式 (標記僅存於本機)</span>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full grid grid-cols-1 md:grid-cols-4 gap-6 relative">
+                        
+                        {/* 雲端同步遮罩 (批次更新時顯示) */}
+                        {isSyncing && (
+                            <div className="absolute inset-0 z-40 bg-white bg-opacity-70 rounded-xl flex flex-col items-center justify-center backdrop-blur-sm">
+                                <div className="bg-teal-800 text-white px-6 py-4 rounded-lg shadow-xl flex items-center space-x-4">
+                                    <div className="spinner"></div>
+                                    <span className="font-bold tracking-wide">正在將大量標記同步至雲端，請稍候...</span>
+                                </div>
+                            </div>
+                        )}
+                            
+                        {/* 左側篩選區 */}
+                        <div className="md:col-span-1 space-y-6">
+                            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                                <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                                    <Icons.Search /> <span className="ml-2">篩選條件</span>
+                                </h2>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">關鍵字搜尋</label>
+                                    <input type="text" name="keyword" placeholder="書名、作者、登錄號..." value={filters.keyword} onChange={handleFilterChange} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">借閱次數區間</label>
+                                    <div className="flex items-center space-x-2">
+                                        <input type="number" name="minBorrow" placeholder="最少" min="0" value={filters.minBorrow} onChange={handleFilterChange} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                                        <span className="text-gray-500">-</span>
+                                        <input type="number" name="maxBorrow" placeholder="最多" min="0" value={filters.maxBorrow} onChange={handleFilterChange} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">出版年份區間 (西元)</label>
+                                    <div className="flex items-center space-x-2">
+                                        <input type="number" name="minYear" placeholder="最早" min="1900" value={filters.minYear} onChange={handleFilterChange} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                                        <span className="text-gray-500">-</span>
+                                        <input type="number" name="maxYear" placeholder="最晚" min="1900" value={filters.maxYear} onChange={handleFilterChange} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">書籍分類 (十大類)</label>
+                                    <select name="categoryPrefix" value={filters.categoryPrefix} onChange={handleFilterChange} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-teal-500">
+                                        {CATEGORIES.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                                    </select>
+                                </div>
+                                
+                                <button onClick={() => setFilters({ keyword: '', minBorrow: '', maxBorrow: '', minYear: '', maxYear: '', categoryPrefix: '' })} className="w-full mt-2 py-2 text-sm text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-md transition">清除所有條件</button>
+                            </div>
+                        </div>
+
+                        {/* 右側內容區 */}
+                        <div className="md:col-span-3 flex flex-col h-full">
+                            
+                            {/* 儀表板 Dashboard */}
+                            <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                <div className="flex space-x-6 w-full sm:w-auto">
+                                    <div>
+                                        <p className="text-xs text-gray-500 font-medium">總館藏數量</p>
+                                        <p className="text-2xl font-bold text-gray-800">{allBooks.length.toLocaleString()}</p>
+                                    </div>
+                                    <div className="pl-6 border-l border-gray-200">
+                                        <p className="text-xs text-teal-600 font-medium">篩選結果數量</p>
+                                        <p className="text-2xl font-bold text-teal-700">
+                                            {filteredAndSortedBooks.length.toLocaleString()}
+                                            <span className="text-sm font-normal text-gray-500 ml-2">({allBooks.length > 0 ? ((filteredAndSortedBooks.length / allBooks.length) * 100).toFixed(1) : 0}%)</span>
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex space-x-2 w-full sm:w-auto">
+                                    <button onClick={exportFilteredToCSV} disabled={filteredAndSortedBooks.length === 0} className={`flex-1 sm:flex-none flex justify-center items-center space-x-2 px-3 py-2 rounded-md transition text-sm ${filteredAndSortedBooks.length === 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-indigo-600 text-indigo-600 hover:bg-indigo-50 shadow-sm'}`}>
+                                        <Icons.Download /><span>匯出篩選結果</span>
+                                    </button>
+                                    <button onClick={exportAllToCSV} disabled={allBooks.length === 0} className={`flex-1 sm:flex-none flex justify-center items-center space-x-2 px-3 py-2 rounded-md transition text-sm ${allBooks.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'}`}>
+                                        <Icons.Database /><span>匯出全館藏總表</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* 標記說明與批次操作區 */}
+                            {!isLoading && allBooks.length > 0 && (
+                                <div className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 mb-4 flex flex-wrap justify-between items-center gap-4">
+                                    <div className="flex items-center space-x-4">
+                                        <span className="text-sm font-bold text-gray-700">快速標記：</span>
+                                        <div className="flex space-x-3 text-sm">
+                                            <span className="flex items-center text-gray-600"><span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs font-bold mr-1.5 shadow-sm cursor-pointer hover:bg-red-600">✗</span> 汰換</span>
+                                            <span className="flex items-center text-gray-600"><span className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs font-bold mr-1.5 shadow-sm cursor-pointer hover:bg-amber-600">?</span> 待討論</span>
+                                            <span className="flex items-center text-gray-600"><span className="w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mr-1.5 shadow-sm cursor-pointer hover:bg-green-600">✓</span> 保留</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 md:border-l md:pl-4 border-gray-200">
+                                        <span className="text-sm font-bold text-gray-700">對目前畫面清單一鍵全選：</span>
+                                        <button onClick={() => setConfirmDialog({ isOpen: true, type: 'discard' })} disabled={filteredAndSortedBooks.length === 0} className="px-3 py-1 bg-white border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm transition font-medium shadow-sm">全部 ✗</button>
+                                        <button onClick={() => setConfirmDialog({ isOpen: true, type: 'discuss' })} disabled={filteredAndSortedBooks.length === 0} className="px-3 py-1 bg-white border border-amber-300 text-amber-600 hover:bg-amber-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm transition font-medium shadow-sm">全部 ?</button>
+                                        <button onClick={() => setConfirmDialog({ isOpen: true, type: 'keep' })} disabled={filteredAndSortedBooks.length === 0} className="px-3 py-1 bg-white border border-green-300 text-green-600 hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm transition font-medium shadow-sm">全部 ✓</button>
+                                        <button onClick={() => setConfirmDialog({ isOpen: true, type: 'clear' })} disabled={filteredAndSortedBooks.length === 0} className="px-3 py-1 bg-gray-50 border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-sm transition font-medium ml-2 shadow-sm">清除標記</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 資料表格 */}
+                            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col">
+                                {isLoading ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-teal-600">
+                                        <Icons.Upload />
+                                        <p className="mt-4 text-lg font-bold animate-pulse">正在從 Google 試算表同步資料中...</p>
+                                        <p className="text-sm mt-2 text-gray-500">資料量較大時可能需要幾秒鐘，請稍候。</p>
+                                    </div>
+                                ) : allBooks.length === 0 ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-700 max-w-2xl mx-auto w-full">
+                                        <Icons.Book />
+                                        <h3 className="mt-4 text-xl font-bold">設定 Google 試算表連動</h3>
+                                        <div className="bg-gray-50 p-6 rounded-lg mt-4 w-full border border-gray-200 text-sm">
+                                            <p className="font-bold mb-2 text-teal-700">準備步驟：</p>
+                                            <ol className="list-decimal list-inside space-y-2 text-gray-600 mb-6">
+                                                <li>將館藏 Excel/CSV 檔上傳至您的 <strong>Google 雲端硬碟</strong>，並用 <strong>Google 試算表</strong> 開啟。</li>
+                                                <li>點擊左上角「<strong>檔案</strong>」&gt;「<strong>共用</strong>」&gt;「<strong>發布到網路</strong>」。</li>
+                                                <li>選擇「整份文件」或特定工作表，將格式改為「<strong>逗號分隔值 (.csv)</strong>」。</li>
+                                                <li>點擊「<strong>發布</strong>」，並複製產生的網址。</li>
+                                            </ol>
+                                            <div className="flex flex-col space-y-2">
+                                                <label className="font-bold text-gray-700">貼上 CSV 發布網址開始連動：</label>
+                                                <div className="flex space-x-2">
+                                                    <input type="text" value={sheetUrlInput} onChange={e => setSheetUrlInput(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                                                    <button onClick={() => fetchCSVData(sheetUrlInput)} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-md transition whitespace-nowrap">載入資料</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-1 max-h-[600px]">
+                                            <table className="min-w-full text-sm text-left whitespace-nowrap">
+                                                <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b border-gray-200">
+                                                    <tr>
+                                                        <th className="px-4 py-3 w-32">標記狀態</th>
+                                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100 transition" onClick={() => handleSort('id')}>
+                                                            <div className="flex items-center space-x-1"><span>登錄號</span>{sortConfig.key === 'id' && (sortConfig.direction === 'asc' ? <Icons.SortAsc /> : <Icons.SortDesc />)}</div>
+                                                        </th>
+                                                        <th className="px-4 py-3 max-w-[250px] cursor-pointer hover:bg-gray-100" onClick={() => handleSort('title')}>
+                                                            <div className="flex items-center space-x-1"><span>書名</span>{sortConfig.key === 'title' && (sortConfig.direction === 'asc' ? <Icons.SortAsc /> : <Icons.SortDesc />)}</div>
+                                                        </th>
+                                                        <th className="px-4 py-3">著者</th>
+                                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => handleSort('category')}>
+                                                            <div className="flex items-center space-x-1"><span>分類號</span>{sortConfig.key === 'category' && (sortConfig.direction === 'asc' ? <Icons.SortAsc /> : <Icons.SortDesc />)}</div>
+                                                        </th>
+                                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100" onClick={() => handleSort('publishYear')}>
+                                                            <div className="flex items-center space-x-1"><span>出版年</span>{sortConfig.key === 'publishYear' && (sortConfig.direction === 'asc' ? <Icons.SortAsc /> : <Icons.SortDesc />)}</div>
+                                                        </th>
+                                                        <th className="px-4 py-3 cursor-pointer hover:bg-gray-100 text-right" onClick={() => handleSort('borrowCount')}>
+                                                            <div className="flex items-center justify-end space-x-1"><span>借閱次數</span>{sortConfig.key === 'borrowCount' && (sortConfig.direction === 'asc' ? <Icons.SortAsc /> : <Icons.SortDesc />)}</div>
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {paginatedBooks.length > 0 ? (
+                                                        paginatedBooks.map((book) => (
+                                                            <tr key={book._internalId} className="border-b border-gray-100 hover:bg-teal-50 transition">
+                                                                <td className="px-4 py-2">
+                                                                    <div className="flex space-x-1">
+                                                                        <button onClick={() => toggleStatus(book.id, 'discard')} title="汰換" className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${bookStatus[book.id] === 'discard' ? 'bg-red-500 text-white border-red-500 shadow-inner' : 'bg-white text-gray-400 border-gray-300 hover:border-red-400 hover:text-red-400'}`}>✗</button>
+                                                                        <button onClick={() => toggleStatus(book.id, 'discuss')} title="待討論" className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${bookStatus[book.id] === 'discuss' ? 'bg-amber-500 text-white border-amber-500 shadow-inner' : 'bg-white text-gray-400 border-gray-300 hover:border-amber-400 hover:text-amber-400'}`}>?</button>
+                                                                        <button onClick={() => toggleStatus(book.id, 'keep')} title="保留" className={`w-6 h-6 rounded-full flex items-center justify-center border text-xs font-bold ${bookStatus[book.id] === 'keep' ? 'bg-green-500 text-white border-green-500 shadow-inner' : 'bg-white text-gray-400 border-gray-300 hover:border-green-400 hover:text-green-400'}`}>✓</button>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-4 py-2 font-mono text-gray-600">{book.id}</td>
+                                                                <td className="px-4 py-2 max-w-[250px] truncate" title={book.title}>{book.title}</td>
+                                                                <td className="px-4 py-2 max-w-[150px] truncate text-gray-600" title={book.author}>{book.author}</td>
+                                                                <td className="px-4 py-2 text-gray-600">{book.category}</td>
+                                                                <td className="px-4 py-2 text-gray-600">{book.publishYear || '-'}</td>
+                                                                <td className="px-4 py-2 text-right font-semibold text-teal-700">{book.borrowCount}</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr><td colSpan="7" className="px-4 py-8 text-center text-gray-500">沒有符合條件的書籍。</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        
+                                        {/* 分頁控制 */}
+                                        {totalPages > 1 && (
+                                            <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+                                                <div className="text-sm text-gray-600">
+                                                    顯示第 {((currentPage - 1) * itemsPerPage) + 1} 到 {Math.min(currentPage * itemsPerPage, filteredAndSortedBooks.length)} 筆，共 {filteredAndSortedBooks.length} 筆
+                                                </div>
+                                                <div className="flex space-x-1">
+                                                    <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1 border border-gray-300 rounded-md bg-white text-gray-600 disabled:opacity-50 hover:bg-gray-50">上一頁</button>
+                                                    <span className="px-4 py-1 text-gray-700">{currentPage} / {totalPages}</span>
+                                                    <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1 border border-gray-300 rounded-md bg-white text-gray-600 disabled:opacity-50 hover:bg-gray-50">下一頁</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* 自訂批次操作確認對話框 */}
+                    {confirmDialog.isOpen && (
+                        <div className="fixed inset-0 z-50 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4">
+                            <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full border-t-4" style={{ borderColor: confirmDialog.type === 'discard' ? '#ef4444' : confirmDialog.type === 'discuss' ? '#f59e0b' : confirmDialog.type === 'keep' ? '#10b981' : '#6b7280' }}>
+                                <h3 className="text-lg font-bold mb-3 text-gray-800">確認批次操作</h3>
+                                <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+                                    確定要將目前篩選出來的 <span className="font-bold text-teal-700 text-base">{filteredAndSortedBooks.length}</span> 筆書籍全部
+                                    <span className={`font-bold ml-1 px-2 py-0.5 rounded text-white ${confirmDialog.type === 'discard' ? 'bg-red-500' : confirmDialog.type === 'discuss' ? 'bg-amber-500' : confirmDialog.type === 'keep' ? 'bg-green-500' : 'bg-gray-500'}`}>
+                                        {confirmDialog.type === 'clear' ? '清除標記' : `標記為「${confirmDialog.type === 'discard' ? '汰換' : confirmDialog.type === 'discuss' ? '待討論' : '保留'}」`}
+                                    </span>
+                                    嗎？
+                                </p>
+                                <div className="flex justify-end space-x-3">
+                                    <button onClick={() => setConfirmDialog({ isOpen: false, type: null })} className="px-4 py-2 bg-gray-100 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium transition">取消</button>
+                                    <button onClick={executeBulkMark} className="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 text-sm font-medium transition shadow-sm">確定執行</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
